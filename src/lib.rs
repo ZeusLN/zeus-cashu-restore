@@ -28,21 +28,17 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
 
     let mut all_unspent_proofs: Vec<types::Proof> = Vec::new();
     let mut keysets_processed: u32 = 0;
-    let mut keysets_skipped: u32 = 0;
-    let mut total_restore_hits: u32 = 0;
     let mut errors: Vec<String> = Vec::new();
 
     // Step 2: For each keyset, attempt restore
     for keyset_info in &keysets {
         // Only process "sat" unit keysets (or keysets with no unit specified)
         if keyset_info.unit != "sat" && !keyset_info.unit.is_empty() {
-            keysets_skipped += 1;
             continue;
         }
 
         // Only process v1 (base64) keyset IDs — v1 proofs were never created under v2 hex keysets
         if keyset_info.id.chars().all(|c| c.is_ascii_hexdigit()) {
-            keysets_skipped += 1;
             continue;
         }
 
@@ -114,7 +110,6 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
 
             // Reset gap counter on success
             consecutive_empty_batches = 0;
-            total_restore_hits += restore_response.signatures.len() as u32;
 
             // Unblind signatures and assemble proofs
             for (out, sig) in restore_response
@@ -166,21 +161,14 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
     }
 
     if all_unspent_proofs.is_empty() {
-        // Return diagnostic info as an error so the caller can log it
-        return Err(RestoreError::MintError(
-            format!("No proofs found. keysets={}, processed={}, skipped={}, restore_hits={}, errors=[{}]",
-                keysets.len(), keysets_processed, keysets_skipped, total_restore_hits,
-                errors.join("; "))
-        ));
+        return Ok(String::new());
     }
 
     // Step 3: Check which proofs are still unspent
     let unspent_proofs = check_and_filter_unspent(&mint_url, &all_unspent_proofs)?;
 
     if unspent_proofs.is_empty() {
-        return Err(RestoreError::MintError(
-            format!("All {} proofs are spent", all_unspent_proofs.len())
-        ));
+        return Ok(String::new());
     }
 
     // Step 4: Encode as cashu token v3 string
