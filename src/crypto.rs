@@ -18,12 +18,9 @@ pub fn derive_secret_and_r(
     use bip32::{DerivationPath, XPrv};
     use std::str::FromStr;
 
-    // Derive the master key from seed (we pad to 64 bytes as BIP32 expects)
-    // For NUT-13: seed is used directly as the BIP32 seed (not as entropy for mnemonic)
-    let mut seed_bytes = [0u8; 64];
-    seed_bytes[..seed.len().min(64)].copy_from_slice(&seed[..seed.len().min(64)]);
-
-    let master = XPrv::new(&seed_bytes).map_err(|e| RestoreError::CryptoError(e.to_string()))?;
+    // Use the raw seed directly as the BIP32 seed (must match cashu-ts behavior).
+    // The bip32 crate accepts 16, 32, or 64-byte seeds. Our v1 seed is 32 bytes.
+    let master = XPrv::new(seed).map_err(|e| RestoreError::CryptoError(e.to_string()))?;
 
     // Derive secret: m/129372'/0'/<keyset_id>'/<counter>'/0
     let secret_path = format!(

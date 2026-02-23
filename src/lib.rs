@@ -156,14 +156,72 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
     Ok(token_str)
 }
 
-/// Convert a hex keyset ID to a u32 for use in BIP32 derivation path.
-/// Keyset IDs are hex-encoded, we take the first 4 bytes as a big-endian u32.
+/// Convert a hex keyset ID to a u32 for use in BIP32 derivation path (NUT-13).
+///
+/// Per NUT-13: interpret the full hex keyset ID as a big-endian integer,
+/// then reduce modulo (2^31 - 1) to fit in a BIP32 hardened child index.
 fn keyset_id_to_int(keyset_id: &str) -> Option<u32> {
-    let bytes = hex::decode(keyset_id).ok()?;
-    if bytes.len() < 4 {
-        return None;
+    let id_int = u64::from_str_radix(keyset_id, 16).ok()?;
+    Some((id_int % (i32::MAX as u64)) as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_keyset_id_to_int() {
+        // NUT-13 test vector: keyset "009a1f293253e41e" => 864559728
+        assert_eq!(keyset_id_to_int("009a1f293253e41e"), Some(864559728));
     }
-    Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+
+    #[test]
+    fn test_nut13_derivation_vectors() {
+        // NUT-13 test vector: mnemonic "half depart obvious quality work element tank gorilla view sugar picture humble"
+        // Full 64-byte BIP39 seed (no passphrase):
+        let seed = hex::decode(
+            "dd44ee516b0647e80b488e8dcc56d736a148f15276bef588b37057476d4b2b25\
+             780d3688a32b37353d6995997842c0fd8b412475c891c16310471fbc86dcbda8"
+        ).unwrap();
+
+        let keyset_id_int: u32 = 864559728;
+
+        // Expected secrets and r values for counters 0-4
+        let expected = [
+            (
+                "485875df74771877439ac06339e284c3acfcd9be7abf3bc20b516faeadfe77ae",
+                "ad00d431add9c673e843d4c2bf9a778a5f402b985b8da2d5550bf39cda41d679",
+            ),
+            (
+                "8f2b39e8e594a4056eb1e6dbb4b0c38ef13b1b2c751f64f810ec04ee35b77270",
+                "967d5232515e10b81ff226ecf5a9e2e2aff92d66ebc3edf0987eb56357fd6248",
+            ),
+            (
+                "bc628c79accd2364fd31511216a0fab62afd4a18ff77a20deded7b858c9860c8",
+                "b20f47bb6ae083659f3aa986bfa0435c55c6d93f687d51a01f26862d9b9a4899",
+            ),
+            (
+                "59284fd1650ea9fa17db2b3acf59ecd0f2d52ec3261dd4152785813ff27a33bf",
+                "fb5fca398eb0b1deb955a2988b5ac77d32956155f1c002a373535211a2dfdc29",
+            ),
+            (
+                "576c23393a8b31cc8da6688d9c9a96394ec74b40fdaf1f693a6bb84284334ea0",
+                "5f09bfbfe27c439a597719321e061e2e40aad4a36768bb2bcc3de547c9644bf9",
+            ),
+        ];
+
+        for (counter, (expected_secret, expected_r)) in expected.iter().enumerate() {
+            let (secret, r) = crypto::derive_secret_and_r(&seed, keyset_id_int, counter as u32)
+                .expect("derivation should succeed");
+
+            assert_eq!(&secret, expected_secret, "secret mismatch at counter {}", counter);
+
+            // Convert r scalar back to hex for comparison
+            let r_bytes: [u8; 32] = r.to_bytes().into();
+            let r_hex = hex::encode(r_bytes);
+            assert_eq!(&r_hex, expected_r, "r mismatch at counter {}", counter);
+        }
+    }
 }
 
 /// Check proof states and filter to only unspent proofs.

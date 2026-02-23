@@ -31,8 +31,8 @@ pub fn encode_token_v3(mint_url: &str, proofs: &[Proof]) -> Result<String, Resto
     let json_str = serde_json::to_string(&token_json)
         .map_err(|e| RestoreError::EncodingError(format!("JSON serialization failed: {}", e)))?;
 
-    // cashu token v3 uses base64url encoding (no padding)
-    let encoded = general_purpose::URL_SAFE_NO_PAD.encode(json_str.as_bytes());
+    // Use standard base64 encoding (matches cashu-ts behavior)
+    let encoded = general_purpose::STANDARD.encode(json_str.as_bytes());
 
     Ok(format!("cashuA{}", encoded))
 }
