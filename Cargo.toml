@@ -1,0 +1,39 @@
+[package]
+name = "zeus-cashu-restore"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone NUT-13 restore for v1 legacy cashu seeds"
+license = "MIT"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+name = "zeus_cashu_restore"
+
+[dependencies]
+# secp256k1 elliptic curve operations
+k256 = { version = "0.13", features = ["arithmetic", "hash2curve", "sha2"] }
+# BIP32 HD key derivation
+bip32 = { version = "0.5", features = ["secp256k1"] }
+# Sync HTTP client (simpler than reqwest for UniFFI; bridge runs in background thread)
+ureq = { version = "2", features = ["json"] }
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Encoding
+hex = "0.4"
+base64 = "0.22"
+# FFI generation
+uniffi = { version = "0.28", features = ["cli"] }
+# Hashing
+sha2 = "0.10"
+# For hash_to_curve domain separation
+generic-array = "0.14"
+# Error derive macro
+thiserror = "1"
+
+[build-dependencies]
+uniffi = { version = "0.28", features = ["build"] }
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"

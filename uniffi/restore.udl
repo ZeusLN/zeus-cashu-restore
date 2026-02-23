@@ -1,0 +1,13 @@
+[Error]
+enum RestoreError {
+    "InvalidSeed",
+    "NetworkError",
+    "MintError",
+    "CryptoError",
+    "EncodingError",
+};
+
+namespace zeus_cashu_restore {
+    [Throws=RestoreError]
+    string restore_from_seed(string mint_url, string seed_hex);
+};

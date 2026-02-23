@@ -1,0 +1,4 @@
+module zeus_cashu_restoreFFI {
+    header "zeus_cashu_restoreFFI.h"
+    export *
+}
