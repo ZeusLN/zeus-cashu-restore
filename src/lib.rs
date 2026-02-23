@@ -40,6 +40,12 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
             continue;
         }
 
+        // Only process v1 (base64) keyset IDs — v1 proofs were never created under v2 hex keysets
+        if keyset_info.id.chars().all(|c| c.is_ascii_hexdigit()) {
+            keysets_skipped += 1;
+            continue;
+        }
+
         // Fetch full keys for this keyset
         let keys = match mint_api::fetch_keys(&mint_url, &keyset_info.id) {
             Ok(k) => k,
@@ -183,13 +189,19 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
     Ok(token_str)
 }
 
-/// Convert a hex keyset ID to a u32 for use in BIP32 derivation path (NUT-13).
+/// Convert a v1 base64 keyset ID to a u32 for use in BIP32 derivation path (NUT-13).
 ///
-/// Per NUT-13: interpret the full hex keyset ID as a big-endian integer,
-/// then reduce modulo (2^31 - 1) to fit in a BIP32 hardened child index.
+/// Base64-decodes the keyset ID, interprets the bytes as a big-endian integer,
+/// then reduces modulo (2^31 - 1) to fit in a BIP32 hardened child index.
+/// This matches cashu-ts's getKeysetIdInt() for legacy keyset IDs.
 fn keyset_id_to_int(keyset_id: &str) -> Option<u32> {
-    let id_int = u64::from_str_radix(keyset_id, 16).ok()?;
-    Some((id_int % (i32::MAX as u64)) as u32)
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(keyset_id)
+        .ok()?;
+    let modulus = i32::MAX as u128;
+    let id_int = bytes.iter().fold(0u128, |acc, &b| (acc << 8) | b as u128);
+    Some((id_int % modulus) as u32)
 }
 
 #[cfg(test)]
@@ -198,8 +210,9 @@ mod tests {
 
     #[test]
     fn test_keyset_id_to_int() {
-        // NUT-13 test vector: keyset "009a1f293253e41e" => 864559728
-        assert_eq!(keyset_id_to_int("009a1f293253e41e"), Some(864559728));
+        // v1 base64 keyset IDs
+        assert!(keyset_id_to_int("ctv28hTYzQwr").is_some());
+        assert!(keyset_id_to_int("9mlfd5vCzgGl").is_some());
     }
 
     #[test]
