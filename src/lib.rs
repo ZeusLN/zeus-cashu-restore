@@ -27,26 +27,38 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
     let keysets = mint_api::fetch_keysets(&mint_url)?;
 
     let mut all_unspent_proofs: Vec<types::Proof> = Vec::new();
+    let mut keysets_processed: u32 = 0;
+    let mut keysets_skipped: u32 = 0;
+    let mut total_restore_hits: u32 = 0;
+    let mut errors: Vec<String> = Vec::new();
 
     // Step 2: For each keyset, attempt restore
     for keyset_info in &keysets {
+        // Only process "sat" unit keysets (or keysets with no unit specified)
+        if keyset_info.unit != "sat" && !keyset_info.unit.is_empty() {
+            keysets_skipped += 1;
+            continue;
+        }
+
         // Fetch full keys for this keyset
         let keys = match mint_api::fetch_keys(&mint_url, &keyset_info.id) {
             Ok(k) => k,
-            Err(_) => continue, // Skip keysets we can't fetch keys for
+            Err(e) => {
+                errors.push(format!("keys/{}: {}", keyset_info.id, e));
+                continue;
+            }
         };
-
-        // Only process "sat" unit keysets (or keysets with no unit specified)
-        if keyset_info.unit != "sat" && !keyset_info.unit.is_empty() {
-            continue;
-        }
 
         // Parse keyset ID to integer for BIP32 derivation path
         let keyset_id_int = match keyset_id_to_int(&keyset_info.id) {
             Some(v) => v,
-            None => continue,
+            None => {
+                errors.push(format!("bad keyset id: {}", keyset_info.id));
+                continue;
+            }
         };
 
+        keysets_processed += 1;
         let mut consecutive_empty_batches = 0;
         let mut counter: u32 = 0;
         const BATCH_SIZE: u32 = 100;
@@ -62,9 +74,8 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
                 // Derive secret and blinding factor via NUT-13 BIP32 paths
                 let (secret, r) = crypto::derive_secret_and_r(&seed, keyset_id_int, idx)?;
 
-                // For restore, we try all standard amounts (powers of 2)
-                // The mint will only return signatures for amounts it recognizes
-                let amount: u64 = 1; // Amount doesn't matter for restore - mint returns correct amount
+                // Amount doesn't matter for restore - mint returns correct amount
+                let amount: u64 = 1;
 
                 // Compute blinded message: B_ = hash_to_curve(secret) + r * G
                 let b_blind = crypto::compute_blinded_message(&secret, &r)?;
@@ -81,7 +92,8 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
             // POST /v1/restore
             let restore_response = match mint_api::post_restore(&mint_url, &outputs) {
                 Ok(resp) => resp,
-                Err(_) => {
+                Err(e) => {
+                    errors.push(format!("restore/{} batch {}: {}", keyset_info.id, counter, e));
                     consecutive_empty_batches += 1;
                     counter += BATCH_SIZE;
                     continue;
@@ -96,6 +108,7 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
 
             // Reset gap counter on success
             consecutive_empty_batches = 0;
+            total_restore_hits += restore_response.signatures.len() as u32;
 
             // Unblind signatures and assemble proofs
             for (out, sig) in restore_response
@@ -139,15 +152,29 @@ pub fn restore_from_seed(mint_url: String, seed_hex: String) -> Result<String, R
         }
     }
 
+    // If we couldn't process any keysets, report the errors
+    if keysets_processed == 0 && !errors.is_empty() {
+        return Err(RestoreError::NetworkError(
+            format!("Failed all {} keyset(s): {}", keysets.len(), errors.join("; "))
+        ));
+    }
+
     if all_unspent_proofs.is_empty() {
-        return Ok(String::new());
+        // Return diagnostic info as an error so the caller can log it
+        return Err(RestoreError::MintError(
+            format!("No proofs found. keysets={}, processed={}, skipped={}, restore_hits={}, errors=[{}]",
+                keysets.len(), keysets_processed, keysets_skipped, total_restore_hits,
+                errors.join("; "))
+        ));
     }
 
     // Step 3: Check which proofs are still unspent
     let unspent_proofs = check_and_filter_unspent(&mint_url, &all_unspent_proofs)?;
 
     if unspent_proofs.is_empty() {
-        return Ok(String::new());
+        return Err(RestoreError::MintError(
+            format!("All {} proofs are spent", all_unspent_proofs.len())
+        ));
     }
 
     // Step 4: Encode as cashu token v3 string
